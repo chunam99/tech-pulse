@@ -1,5 +1,6 @@
-import { db, initDb } from "@/lib/db";
+import { getDb, isSqliteEnabled } from "@/lib/db";
 import { hostingPlans } from "@/lib/db/schema";
+import { HOSTING_SEED_PLANS } from "@/lib/services/hosting-data";
 import type { HostingPlan } from "@/types";
 import { asc } from "drizzle-orm";
 
@@ -20,150 +21,40 @@ function rowToPlan(row: typeof hostingPlans.$inferSelect): HostingPlan {
   };
 }
 
-/** Seed data — cập nhật thủ công hoặc mở rộng scraper sau */
-const SEED_PLANS: Omit<HostingPlan, "id">[] = [
-  {
-    provider: "DigitalOcean",
-    providerSlug: "digitalocean",
-    name: "Basic 1GB",
-    ramGb: 1,
-    cpuCores: 1,
-    storageGb: 25,
-    bandwidthTb: 1,
-    priceMonthlyUsd: 6,
-    region: "Global",
-    affiliateUrl: "https://www.digitalocean.com/pricing/droplets",
-    features: ["SSD", "Monitoring", "API"],
-  },
-  {
-    provider: "DigitalOcean",
-    providerSlug: "digitalocean",
-    name: "Basic 2GB",
-    ramGb: 2,
-    cpuCores: 1,
-    storageGb: 50,
-    bandwidthTb: 2,
-    priceMonthlyUsd: 12,
-    region: "Global",
-    affiliateUrl: "https://www.digitalocean.com/pricing/droplets",
-    features: ["SSD", "Monitoring", "API"],
-  },
-  {
-    provider: "Vultr",
-    providerSlug: "vultr",
-    name: "Cloud Compute 1GB",
-    ramGb: 1,
-    cpuCores: 1,
-    storageGb: 25,
-    bandwidthTb: 1,
-    priceMonthlyUsd: 5,
-    region: "Global",
-    affiliateUrl: "https://www.vultr.com/pricing/",
-    features: ["NVMe", "IPv6", "Snapshots"],
-  },
-  {
-    provider: "Vultr",
-    providerSlug: "vultr",
-    name: "Cloud Compute 2GB",
-    ramGb: 2,
-    cpuCores: 1,
-    storageGb: 55,
-    bandwidthTb: 2,
-    priceMonthlyUsd: 10,
-    region: "Global",
-    affiliateUrl: "https://www.vultr.com/pricing/",
-    features: ["NVMe", "IPv6", "Snapshots"],
-  },
-  {
-    provider: "Linode (Akamai)",
-    providerSlug: "linode",
-    name: "Nanode 1GB",
-    ramGb: 1,
-    cpuCores: 1,
-    storageGb: 25,
-    bandwidthTb: 1,
-    priceMonthlyUsd: 5,
-    region: "Global",
-    affiliateUrl: "https://www.linode.com/pricing/",
-    features: ["SSD", "Backups optional"],
-  },
-  {
-    provider: "Linode (Akamai)",
-    providerSlug: "linode",
-    name: "Linode 2GB",
-    ramGb: 2,
-    cpuCores: 1,
-    storageGb: 50,
-    bandwidthTb: 2,
-    priceMonthlyUsd: 12,
-    region: "Global",
-    affiliateUrl: "https://www.linode.com/pricing/",
-    features: ["SSD", "Backups optional"],
-  },
-  {
-    provider: "Hetzner",
-    providerSlug: "hetzner",
-    name: "CX22",
-    ramGb: 4,
-    cpuCores: 2,
-    storageGb: 40,
-    bandwidthTb: 20,
-    priceMonthlyUsd: 4.5,
-    region: "EU",
-    affiliateUrl: "https://www.hetzner.com/cloud",
-    features: ["NVMe", "IPv4+IPv6", "Giá EU"],
-  },
-  {
-    provider: "Hetzner",
-    providerSlug: "hetzner",
-    name: "CX32",
-    ramGb: 8,
-    cpuCores: 4,
-    storageGb: 80,
-    bandwidthTb: 20,
-    priceMonthlyUsd: 7.5,
-    region: "EU",
-    affiliateUrl: "https://www.hetzner.com/cloud",
-    features: ["NVMe", "IPv4+IPv6", "Giá EU"],
-  },
-  {
-    provider: "Contabo",
-    providerSlug: "contabo",
-    name: "Cloud VPS S",
-    ramGb: 4,
-    cpuCores: 4,
-    storageGb: 50,
-    bandwidthTb: 32,
-    priceMonthlyUsd: 6.99,
-    region: "EU/US",
-    affiliateUrl: "https://contabo.com/en/vps/",
-    features: ["Unlimited traffic*", "Giá rẻ"],
-  },
-  {
-    provider: "Contabo",
-    providerSlug: "contabo",
-    name: "Cloud VPS M",
-    ramGb: 8,
-    cpuCores: 6,
-    storageGb: 100,
-    bandwidthTb: 32,
-    priceMonthlyUsd: 10.99,
-    region: "EU/US",
-    affiliateUrl: "https://contabo.com/en/vps/",
-    features: ["Unlimited traffic*", "Giá rẻ"],
-  },
-];
+function filterPlans(
+  plans: HostingPlan[],
+  options?: { minRam?: number; maxPrice?: number; provider?: string },
+): HostingPlan[] {
+  let result = [...plans].sort((a, b) => a.priceMonthlyUsd - b.priceMonthlyUsd);
+
+  if (options?.minRam) {
+    result = result.filter((p) => p.ramGb >= options.minRam!);
+  }
+  if (options?.maxPrice) {
+    result = result.filter((p) => p.priceMonthlyUsd <= options.maxPrice!);
+  }
+  if (options?.provider) {
+    result = result.filter((p) => p.providerSlug === options.provider);
+  }
+
+  return result;
+}
 
 export async function syncHosting(): Promise<number> {
-  initDb();
+  if (!isSqliteEnabled) {
+    return HOSTING_SEED_PLANS.length;
+  }
+
+  const db = await getDb();
+  if (!db) return HOSTING_SEED_PLANS.length;
+
   const now = new Date().toISOString();
 
-  for (const plan of SEED_PLANS) {
-    const id = `${plan.providerSlug}-${slugifyPlan(plan.name)}`;
+  for (const plan of HOSTING_SEED_PLANS) {
     await db
       .insert(hostingPlans)
       .values({
-        id,
+        id: plan.id,
         provider: plan.provider,
         providerSlug: plan.providerSlug,
         name: plan.name,
@@ -187,11 +78,7 @@ export async function syncHosting(): Promise<number> {
       });
   }
 
-  return SEED_PLANS.length;
-}
-
-function slugifyPlan(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return HOSTING_SEED_PLANS.length;
 }
 
 export async function getHostingPlans(options?: {
@@ -199,7 +86,15 @@ export async function getHostingPlans(options?: {
   maxPrice?: number;
   provider?: string;
 }): Promise<HostingPlan[]> {
-  initDb();
+  if (!isSqliteEnabled) {
+    return filterPlans(HOSTING_SEED_PLANS, options);
+  }
+
+  const db = await getDb();
+  if (!db) {
+    return filterPlans(HOSTING_SEED_PLANS, options);
+  }
+
   const rows = await db
     .select()
     .from(hostingPlans)
@@ -210,19 +105,7 @@ export async function getHostingPlans(options?: {
     return getHostingPlans(options);
   }
 
-  let plans = rows.map(rowToPlan);
-
-  if (options?.minRam) {
-    plans = plans.filter((p) => p.ramGb >= options.minRam!);
-  }
-  if (options?.maxPrice) {
-    plans = plans.filter((p) => p.priceMonthlyUsd <= options.maxPrice!);
-  }
-  if (options?.provider) {
-    plans = plans.filter((p) => p.providerSlug === options.provider);
-  }
-
-  return plans;
+  return filterPlans(rows.map(rowToPlan), options);
 }
 
 export async function getHostingProviders(): Promise<
@@ -243,5 +126,3 @@ export async function getHostingProviders(): Promise<
     count,
   }));
 }
-
-export { getPricePerGbRam } from "@/lib/utils";

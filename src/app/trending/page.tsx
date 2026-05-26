@@ -1,7 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { LanguageTabs } from "@/components/trending/LanguageTabs";
 import { TrendingList } from "@/components/trending/TrendingList";
-import { initDb } from "@/lib/db";
 import { getTrendingRepos } from "@/lib/services/github";
 import { getServerTranslations } from "@/i18n/server";
 
@@ -20,7 +19,6 @@ export async function generateMetadata() {
 }
 
 export default async function TrendingPage({ searchParams }: PageProps) {
-  initDb();
   const { lang = "" } = await searchParams;
   const { messages, t } = await getServerTranslations();
   const repos = await getTrendingRepos({ language: lang, limit: 30 });

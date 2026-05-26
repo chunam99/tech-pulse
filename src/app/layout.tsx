@@ -47,7 +47,10 @@ export default async function RootLayout({
       <head>
         <ThemeScript />
       </head>
-      <body className="flex min-h-full flex-col bg-background text-foreground">
+      <body
+        className="flex min-h-full flex-col bg-background text-foreground"
+        suppressHydrationWarning
+      >
         <AppProviders locale={locale} messages={messages}>
           <Header />
           <main className="flex-1">{children}</main>
