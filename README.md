@@ -63,8 +63,9 @@ Trên Vercel: thêm Cron Job trỏ tới `/api/cron/sync` với header `Authoriz
 
 ## Deploy
 
-- **Vercel**: SQLite local không persist giữa các invocation — production nên dùng Turso/Neon hoặc chạy sync trên VPS.
-- **VPS/Docker**: giữ file `data/tech-pulse.db` trên volume.
+- **Vercel**: Tự động tắt SQLite (`VERCEL=1`), fetch trực tiếp từ RemoteOK + GitHub API + seed hosting. Không cần DB file trên serverless.
+- **Local**: SQLite trong `./data/tech-pulse.db` (chạy `yarn db:seed` để cache nhanh hơn).
+- **VPS/Docker**: giữ file `data/tech-pulse.db` trên volume nếu muốn cache lâu dài.
 
 ## Mở rộng
 

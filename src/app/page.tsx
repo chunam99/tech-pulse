@@ -1,7 +1,6 @@
 import { HeroSection } from "@/components/home/HeroSection";
 import { FeatureCards } from "@/components/home/FeatureCards";
 import { HomePreview } from "@/components/home/HomePreview";
-import { initDb } from "@/lib/db";
 import { getJobs } from "@/lib/services/jobs";
 import { getTrendingRepos } from "@/lib/services/github";
 import { getHostingPlans } from "@/lib/services/hosting";
@@ -9,8 +8,6 @@ import { getHostingPlans } from "@/lib/services/hosting";
 export const revalidate = 3600;
 
 export default async function HomePage() {
-  initDb();
-
   const [jobs, repos, plans] = await Promise.all([
     getJobs({ limit: 5 }),
     getTrendingRepos({ limit: 5 }),

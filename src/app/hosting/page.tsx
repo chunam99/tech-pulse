@@ -3,7 +3,6 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { HostingFilters } from "@/components/hosting/HostingFilters";
 import { HostingPlanGrid } from "@/components/hosting/HostingPlanGrid";
 import { HostingCompareTable } from "@/components/hosting/HostingCompareTable";
-import { initDb } from "@/lib/db";
 import {
   getHostingPlans,
   getHostingProviders,
@@ -29,7 +28,6 @@ export async function generateMetadata() {
 }
 
 export default async function HostingPage({ searchParams }: PageProps) {
-  initDb();
   const params = await searchParams;
   const { messages, t } = await getServerTranslations();
 

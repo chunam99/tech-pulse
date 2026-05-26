@@ -3,7 +3,6 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { initDb } from "@/lib/db";
 import { getJobBySlug } from "@/lib/services/jobs";
 import { timeAgo } from "@/lib/utils";
 import { getServerTranslations } from "@/i18n/server";
@@ -16,7 +15,6 @@ export async function generateMetadata({ params }: PageProps) {
   const { slug } = await params;
   const { t } = await getServerTranslations();
 
-  initDb();
   const job = await getJobBySlug(slug);
   if (!job) return { title: t("jobs.notFound") };
   return {
@@ -31,7 +29,6 @@ export async function generateMetadata({ params }: PageProps) {
 
 export default async function JobDetailPage({ params }: PageProps) {
   const { slug } = await params;
-  initDb();
   const job = await getJobBySlug(slug);
   const { messages, t } = await getServerTranslations();
 

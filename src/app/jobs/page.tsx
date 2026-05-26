@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import { JobFilters } from "@/components/jobs/JobFilters";
 import { JobList } from "@/components/jobs/JobList";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { initDb } from "@/lib/db";
 import { getJobs, getJobTags } from "@/lib/services/jobs";
 import { getServerTranslations } from "@/i18n/server";
 
@@ -21,7 +20,6 @@ export async function generateMetadata() {
 }
 
 export default async function JobsPage({ searchParams }: PageProps) {
-  initDb();
   const { tag, q } = await searchParams;
   const { messages, t } = await getServerTranslations();
 

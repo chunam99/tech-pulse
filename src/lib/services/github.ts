@@ -1,6 +1,7 @@
-import { db, initDb } from "@/lib/db";
+import { getDb, isSqliteEnabled } from "@/lib/db";
 import { trendingRepos } from "@/lib/db/schema";
 import type { TrendingRepo } from "@/types";
+import { unstable_cache } from "next/cache";
 import { and, desc, eq } from "drizzle-orm";
 
 type GitHubSearchItem = {
@@ -59,7 +60,10 @@ export async function fetchGitHubTrending(
   };
   if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
 
-  const res = await fetch(url.toString(), { headers, next: { revalidate: 0 } });
+  const res = await fetch(url.toString(), {
+    headers,
+    next: { revalidate: 3600 },
+  });
 
   if (!res.ok) {
     const text = await res.text();
@@ -84,13 +88,27 @@ export async function fetchGitHubTrending(
   }));
 }
 
+function getCachedTrending(language: string) {
+  return unstable_cache(
+    () => fetchGitHubTrending(language, "weekly"),
+    ["github-trending", language],
+    { revalidate: 3600 },
+  )();
+}
+
 export async function syncTrending(): Promise<number> {
-  initDb();
   let total = 0;
-  const now = new Date().toISOString();
 
   for (const language of LANGUAGES) {
     const repos = await fetchGitHubTrending(language, "weekly");
+    total += repos.length;
+
+    if (!isSqliteEnabled) continue;
+
+    const db = await getDb();
+    if (!db) continue;
+
+    const now = new Date().toISOString();
 
     for (const repo of repos) {
       await db
@@ -117,11 +135,9 @@ export async function syncTrending(): Promise<number> {
             syncedAt: now,
           },
         });
-      total++;
     }
 
-    // GitHub rate limit: pause between language batches
-    await new Promise((r) => setTimeout(r, GITHUB_TOKEN ? 500 : 2000));
+    await new Promise((r) => setTimeout(r, GITHUB_TOKEN ? 500 : 1500));
   }
 
   return total;
@@ -131,27 +147,39 @@ export async function getTrendingRepos(options?: {
   language?: string;
   limit?: number;
 }): Promise<TrendingRepo[]> {
-  initDb();
   const language = options?.language ?? "";
   const limit = options?.limit ?? 30;
 
-  const rows = await db
-    .select()
-    .from(trendingRepos)
-    .where(
-      and(
-        eq(trendingRepos.period, "weekly"),
-        eq(trendingRepos.languageFilter, language),
-      ),
-    )
-    .orderBy(desc(trendingRepos.stars))
-    .limit(limit);
+  if (!isSqliteEnabled) {
+    try {
+      const repos = await getCachedTrending(language);
+      return repos.slice(0, limit);
+    } catch (error) {
+      console.error("GitHub trending fetch failed:", error);
+      return [];
+    }
+  }
 
-  if (rows.length > 0) return rows.map(rowToRepo);
+  const db = await getDb();
+  if (db) {
+    const rows = await db
+      .select()
+      .from(trendingRepos)
+      .where(
+        and(
+          eq(trendingRepos.period, "weekly"),
+          eq(trendingRepos.languageFilter, language),
+        ),
+      )
+      .orderBy(desc(trendingRepos.stars))
+      .limit(limit);
 
-  // Fallback: fetch live if DB empty
+    if (rows.length > 0) return rows.map(rowToRepo);
+  }
+
   try {
-    return await fetchGitHubTrending(language);
+    const repos = await getCachedTrending(language);
+    return repos.slice(0, limit);
   } catch {
     return [];
   }

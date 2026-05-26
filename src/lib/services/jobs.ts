@@ -1,7 +1,8 @@
-import { db, initDb } from "@/lib/db";
+import { getDb, initDb, isSqliteEnabled } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { slugify } from "@/lib/utils";
 import type { Job } from "@/types";
+import { unstable_cache } from "next/cache";
 import { desc, eq } from "drizzle-orm";
 
 type RemoteOkItem = {
@@ -34,10 +35,39 @@ function rowToJob(row: typeof jobs.$inferSelect): Job {
   };
 }
 
+function filterJobs(
+  list: Job[],
+  options?: { tag?: string; search?: string; limit?: number },
+): Job[] {
+  let result = list;
+
+  if (options?.tag) {
+    const tag = options.tag.toLowerCase();
+    result = result.filter((j) =>
+      j.tags.some((t) => t.toLowerCase().includes(tag)),
+    );
+  }
+
+  if (options?.search) {
+    const q = options.search.toLowerCase();
+    result = result.filter(
+      (j) =>
+        j.title.toLowerCase().includes(q) ||
+        j.company.toLowerCase().includes(q) ||
+        j.tags.some((t) => t.toLowerCase().includes(q)),
+    );
+  }
+
+  return result.slice(0, options?.limit ?? 50);
+}
+
 export async function fetchRemoteOkJobs(): Promise<Job[]> {
   const res = await fetch("https://remoteok.com/api", {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 0 },
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "TechPulse/1.0 (job aggregator)",
+    },
+    next: { revalidate: 3600 },
   });
 
   if (!res.ok) {
@@ -57,7 +87,7 @@ export async function fetchRemoteOkJobs(): Promise<Job[]> {
         : null;
     const postedAt = item.epoch
       ? new Date(item.epoch * 1000).toISOString()
-      : item.date ?? null;
+      : (item.date ?? null);
 
     return {
       id: `remoteok-${item.id}`,
@@ -75,9 +105,31 @@ export async function fetchRemoteOkJobs(): Promise<Job[]> {
   });
 }
 
+const getCachedRemoteOkJobs = unstable_cache(
+  fetchRemoteOkJobs,
+  ["remoteok-jobs"],
+  { revalidate: 3600 },
+);
+
+async function loadJobsLive(): Promise<Job[]> {
+  try {
+    return await getCachedRemoteOkJobs();
+  } catch (error) {
+    console.error("RemoteOK fetch failed:", error);
+    return [];
+  }
+}
+
 export async function syncJobs(): Promise<number> {
-  initDb();
   const fetched = await fetchRemoteOkJobs();
+
+  if (!isSqliteEnabled) {
+    return fetched.length;
+  }
+
+  const db = await getDb();
+  if (!db) return fetched.length;
+
   const now = new Date().toISOString();
 
   for (const job of fetched) {
@@ -116,48 +168,59 @@ export async function getJobs(options?: {
   search?: string;
   limit?: number;
 }): Promise<Job[]> {
-  initDb();
+  if (!isSqliteEnabled) {
+    const live = await loadJobsLive();
+    return filterJobs(live, options);
+  }
+
+  await initDb();
+  const db = await getDb();
+  if (!db) {
+    const live = await loadJobsLive();
+    return filterJobs(live, options);
+  }
+
   const limit = options?.limit ?? 50;
+  const rows = await db
+    .select()
+    .from(jobs)
+    .orderBy(desc(jobs.postedAt))
+    .limit(limit);
 
-  let query = db.select().from(jobs).orderBy(desc(jobs.postedAt)).limit(limit);
-
-  const rows = await query;
-  let result = rows.map(rowToJob);
-
-  if (options?.tag) {
-    const tag = options.tag.toLowerCase();
-    result = result.filter((j) =>
-      j.tags.some((t) => t.toLowerCase().includes(tag)),
-    );
+  if (rows.length === 0) {
+    const live = await loadJobsLive();
+    return filterJobs(live, options);
   }
 
-  if (options?.search) {
-    const q = options.search.toLowerCase();
-    result = result.filter(
-      (j) =>
-        j.title.toLowerCase().includes(q) ||
-        j.company.toLowerCase().includes(q) ||
-        j.tags.some((t) => t.toLowerCase().includes(q)),
-    );
-  }
-
-  return result;
+  return filterJobs(rows.map(rowToJob), options);
 }
 
 export async function getJobBySlug(slug: string): Promise<Job | null> {
-  initDb();
+  if (!isSqliteEnabled) {
+    const live = await loadJobsLive();
+    return live.find((j) => j.slug === slug) ?? null;
+  }
+
+  await initDb();
+  const db = await getDb();
+  if (!db) {
+    const live = await loadJobsLive();
+    return live.find((j) => j.slug === slug) ?? null;
+  }
+
   const rows = await db.select().from(jobs).where(eq(jobs.slug, slug)).limit(1);
-  return rows[0] ? rowToJob(rows[0]) : null;
+  if (rows[0]) return rowToJob(rows[0]);
+
+  const live = await loadJobsLive();
+  return live.find((j) => j.slug === slug) ?? null;
 }
 
 export async function getJobTags(limit = 20): Promise<string[]> {
-  initDb();
-  const rows = await db.select({ tags: jobs.tags }).from(jobs).limit(200);
+  const all = await getJobs({ limit: 200 });
   const counts = new Map<string, number>();
 
-  for (const row of rows) {
-    const tags = JSON.parse(row.tags) as string[];
-    for (const tag of tags) {
+  for (const job of all) {
+    for (const tag of job.tags) {
       const key = tag.toLowerCase();
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
